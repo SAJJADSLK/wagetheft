@@ -3,23 +3,28 @@
   "buildCommand": "npm run build",
   "devCommand": "npm run dev",
   "installCommand": "npm install",
-
+  "build": {
+    "env": {
+      "NODE_VERSION": "18.x"
+    }
+  },
   "crons": [
     {
       "path": "/api/cron/fetch-data",
       "schedule": "0 6 * * *"
     }
   ],
-
   "functions": {
     "pages/api/cron/fetch-data.js": {
+      "maxDuration": 300
+    },
+    "pages/api/trigger.js": {
       "maxDuration": 300
     },
     "pages/api/search.js": {
       "maxDuration": 10
     }
   },
-
   "headers": [
     {
       "source": "/api/(.*)",
