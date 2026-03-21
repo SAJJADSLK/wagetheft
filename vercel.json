@@ -1,0 +1,31 @@
+{
+  "framework": "nextjs",
+  "buildCommand": "npm run build",
+  "devCommand": "npm run dev",
+  "installCommand": "npm install",
+
+  "crons": [
+    {
+      "path": "/api/cron/fetch-data",
+      "schedule": "0 6 * * *"
+    }
+  ],
+
+  "functions": {
+    "pages/api/cron/fetch-data.js": {
+      "maxDuration": 300
+    },
+    "pages/api/search.js": {
+      "maxDuration": 10
+    }
+  },
+
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-store" }
+      ]
+    }
+  ]
+}
