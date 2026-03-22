@@ -12,7 +12,8 @@
     "next": "^14.2.0",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
-    "@supabase/supabase-js": "^2.43.0"
+    "@supabase/supabase-js": "^2.43.0",
+    "xlsx": "^0.18.5"
   },
   "engines": {
     "node": "24.x"

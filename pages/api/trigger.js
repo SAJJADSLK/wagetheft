@@ -1,61 +1,83 @@
-export const config = { maxDuration: 60 };
+export const config = { maxDuration: 300 };
+
+import {
+  fetchDOL, fetchUKHMRC, fetchAustralia,
+  fetchCanada, fetchIreland, fetchNetherlands, fetchEurope,
+} from '../../lib/fetchers';
+import { upsertViolations, refreshStats, logCron } from '../../lib/supabase';
+
+const SOURCES = [
+  { name: 'DOL_USA', fn: () => fetchDOL(process.env.DOL_API_KEY) },
+  { name: 'HMRC_UK', fn: fetchUKHMRC },
+  { name: 'FWO_AU',  fn: fetchAustralia },
+  { name: 'ESDC_CA', fn: fetchCanada },
+  { name: 'WRC_IE',  fn: fetchIreland },
+  { name: 'NLA_NL',  fn: fetchNetherlands },
+  { name: 'ELA_EU',  fn: fetchEurope },
+];
 
 export default async function handler(req, res) {
-  const UA = 'Mozilla/5.0 WageTheft.live/1.0';
-  const dolKey = process.env.DOL_API_KEY;
+  const start = Date.now();
+  const results = [];
+  let stored = 0;
 
-  // DOL confirmed working: data.dol.gov/get/whd_whisard/rows:5/format:json
-  // 11015 bytes for 5 rows - show full body to see structure
-  let dolBody = '';
-  try {
-    const r = await fetch(
-      `https://data.dol.gov/get/whd_whisard/rows:5/format:json`,
-      { headers: { 'x-api-key': dolKey, 'User-Agent': UA }, signal: AbortSignal.timeout(20000) }
-    );
-    dolBody = await r.text();
-  } catch(e) { dolBody = 'ERROR: ' + e.message; }
-
-  // HMRC - try correct URL format
-  let hmrcBody = '';
-  const hmrcUrls = [
-    'https://www.gov.uk/government/publications/named-employers-who-have-not-paid-national-minimum-wage',
-    'https://www.gov.uk/guidance/named-employers-who-have-not-paid-national-minimum-wage',
-    'https://assets.publishing.service.gov.uk/media/65d4a4c61419100011f45316/2024_publication_of_NMW_named_employers.csv',
-    'https://assets.publishing.service.gov.uk/media/6537d5e70466c1000d759cda/23_24_NMW_Naming_Scheme_Employers.csv',
-  ];
-  const hmrcResults = [];
-  for (const u of hmrcUrls) {
+  for (const { name, fn } of SOURCES) {
+    const t = Date.now();
     try {
-      const r = await fetch(u, { headers: {'User-Agent': UA}, signal: AbortSignal.timeout(15000) });
-      const text = await r.text();
-      hmrcResults.push(`${u.split('/').pop()} → HTTP ${r.status} · ${text.length} bytes · ${text.slice(0,80).replace(/\n/g,' ')}`);
-    } catch(e) { hmrcResults.push(`${u.split('/').pop()} → ERROR: ${e.message}`); }
+      const rows = await fn();
+      if (!rows.length) {
+        await logCron(name, 0, 'no_data');
+        results.push({ source: name, status: 'no_data', fetched: 0, stored: 0, ms: Date.now()-t });
+        continue;
+      }
+      const { count } = await upsertViolations(rows);
+      stored += count ?? 0;
+      await logCron(name, rows.length, 'ok');
+      results.push({ source: name, status: 'ok', fetched: rows.length, stored: count??0, ms: Date.now()-t });
+    } catch(e) {
+      await logCron(name, 0, 'error', e.message).catch(()=>{});
+      results.push({ source: name, status: 'error', error: e.message, ms: Date.now()-t });
+    }
   }
 
-  // WRC Ireland RSS - show raw first 2 items
-  let wrcBody = '';
-  try {
-    const r = await fetch('https://www.workplacerelations.ie/en/news_media/press_releases/rss', {
-      headers: {'User-Agent': UA}, signal: AbortSignal.timeout(20000)
-    });
-    const text = await r.text();
-    const items = [...text.matchAll(/<item>([\s\S]*?)<\/item>/g)].slice(0,3);
-    wrcBody = `HTTP ${r.status} · ${items.length} items\n` + items.map(([,ix]) => ix.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim().slice(0,150)).join('\n---\n');
-  } catch(e) { wrcBody = 'ERROR: ' + e.message; }
+  try { await refreshStats(); } catch(_) {}
 
-  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Debug v6</title>
-<style>body{font-family:monospace;background:#f8f6f1;padding:20px;font-size:12px}
-h2{font-family:system-ui;font-size:14px;margin:16px 0 8px;font-weight:700}
-pre{background:#fff;border:1px solid #ddd;padding:12px;border-radius:4px;overflow-x:auto;white-space:pre-wrap;font-size:11px;line-height:1.5;max-height:400px;overflow-y:auto}
+  const totalMs = Date.now() - start;
+
+  const html = `<!DOCTYPE html><html><head>
+<meta charset="UTF-8"><title>WageTheft — Fetch</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,sans-serif;background:#f8f6f1;padding:32px 24px;color:#1a1814}
+h1{font-size:26px;font-weight:600;margin-bottom:6px}
+.sub{font-size:13px;color:#9a9488;margin-bottom:24px}
+.card{background:#fff;border:1px solid #e0dbd0;border-radius:8px;padding:20px 24px;margin-bottom:12px}
+h2{font-size:14px;font-weight:600;margin-bottom:14px}
+.big{font-size:44px;font-weight:700;color:#8b6914;margin-bottom:4px}
+.row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid #f0ece4;font-size:13px}
+.row:last-child{border-bottom:none}
+.ok{color:#3B6D11;font-weight:600}.bad{color:#A32D2D;font-weight:600}.warn{color:#854F0B}
+.btn{display:inline-block;margin-top:20px;background:#1a1814;color:#f8f6f1;padding:12px 28px;border-radius:6px;text-decoration:none;font-size:14px}
 </style></head><body>
-<h2>DOL Full Body (first 2000 chars):</h2>
-<pre>${dolBody.slice(0,2000).replace(/</g,'&lt;')}</pre>
-
-<h2>HMRC URL Tests:</h2>
-<pre>${hmrcResults.join('\n').replace(/</g,'&lt;')}</pre>
-
-<h2>WRC Ireland RSS (first 3 items raw):</h2>
-<pre>${wrcBody.replace(/</g,'&lt;')}</pre>
+<h1>${stored>0?'✅':'⚠️'} Data fetch complete</h1>
+<div class="sub">Finished in ${(totalMs/1000).toFixed(1)}s · ${new Date().toUTCString()}</div>
+<div class="card">
+  <h2>Total stored to Supabase</h2>
+  <div class="big">${stored.toLocaleString()}</div>
+  <div style="font-size:13px;color:#9a9488">${stored>0?'Go to homepage to see live records':'No new records — check errors'}</div>
+</div>
+<div class="card">
+  <h2>Results by source</h2>
+  ${results.map(r=>`<div class="row">
+    <span>${r.source}</span>
+    <span class="${r.status==='ok'?'ok':r.status==='no_data'?'warn':'bad'}">
+      ${r.status==='ok'?`✓ ${r.fetched} fetched · ${r.stored} stored · ${r.ms}ms`
+        :r.status==='no_data'?`⚠ No data · ${r.ms}ms`
+        :`✗ ${(r.error||'').slice(0,60)} · ${r.ms}ms`}
+    </span>
+  </div>`).join('')}
+</div>
+<a class="btn" href="/">← Go to homepage</a>
 </body></html>`;
 
   res.setHeader('Content-Type','text/html');
