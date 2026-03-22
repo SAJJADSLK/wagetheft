@@ -1,98 +1,110 @@
 export const config = { maxDuration: 300 };
 
-import {
-  fetchDOL, fetchUKHMRC, fetchAustralia,
-  fetchCanada, fetchIreland, fetchNetherlands, fetchEurope,
-} from '../../lib/fetchers';
-import { upsertViolations, refreshStats, logCron } from '../../lib/supabase';
-
-const SOURCES = [
-  { name: 'DOL_USA', fn: () => fetchDOL(process.env.DOL_API_KEY) },
-  { name: 'HMRC_UK', fn: fetchUKHMRC },
-  { name: 'FWO_AU',  fn: fetchAustralia },
-  { name: 'ESDC_CA', fn: fetchCanada },
-  { name: 'WRC_IE',  fn: fetchIreland },
-  { name: 'NLA_NL',  fn: fetchNetherlands },
-  { name: 'ELA_EU',  fn: fetchEurope },
-];
-
 export default async function handler(req, res) {
-  const start   = Date.now();
   const results = [];
-  let   stored  = 0;
+  const UA = 'Mozilla/5.0 WageTheft.live/1.0';
 
-  for (const { name, fn } of SOURCES) {
-    const t = Date.now();
-    try {
-      const rows = await fn();
-      if (!rows.length) {
-        await logCron(name, 0, 'no_data');
-        results.push({ source: name, status: 'no_data', fetched: 0, stored: 0, ms: Date.now()-t });
-        continue;
-      }
-      const { count } = await upsertViolations(rows);
-      stored += count ?? 0;
-      await logCron(name, rows.length, 'ok');
-      results.push({ source: name, status: 'ok', fetched: rows.length, stored: count ?? 0, ms: Date.now()-t });
-    } catch (err) {
-      await logCron(name, 0, 'error', err.message).catch(()=>{});
-      results.push({ source: name, status: 'error', error: err.message, ms: Date.now()-t });
-    }
-  }
+  // ── DOL USA ───────────────────────────────────────────────────────────────
+  try {
+    const key = process.env.DOL_API_KEY;
+    // Try the enforcedata direct JSON endpoint
+    const r = await fetch(
+      `https://data.dol.gov/get/whd_whisard/rows:5/format:json`,
+      { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(15000) }
+    );
+    const text = await r.text();
+    results.push({ source: 'DOL_direct', status: r.status, body: text.slice(0,500) });
+  } catch(e) { results.push({ source: 'DOL_direct', error: e.message }); }
 
-  try { await refreshStats(); } catch(_) {}
+  try {
+    const key = process.env.DOL_API_KEY;
+    const r = await fetch(
+      `https://apiprod.dol.gov/v4/get/WHD/whd_whisard?limit=3&offset=0`,
+      { headers: { 'User-Agent': UA, 'X-API-Key': key, Accept: 'application/json' }, signal: AbortSignal.timeout(15000) }
+    );
+    const text = await r.text();
+    results.push({ source: 'DOL_apiprod', status: r.status, body: text.slice(0,500) });
+  } catch(e) { results.push({ source: 'DOL_apiprod', error: e.message }); }
 
-  const totalMs = Date.now() - start;
+  try {
+    const key = process.env.DOL_API_KEY;
+    const r = await fetch(
+      `https://api.dol.gov/V1/WHD/whd_whisard?KEY=${key}&$top=3`,
+      { headers: { 'User-Agent': UA, Accept: 'application/json' }, signal: AbortSignal.timeout(15000) }
+    );
+    const text = await r.text();
+    results.push({ source: 'DOL_v1', status: r.status, body: text.slice(0,500) });
+  } catch(e) { results.push({ source: 'DOL_v1', error: e.message }); }
 
-  const html = `<!DOCTYPE html>
-<html><head>
-<meta charset="UTF-8">
-<title>WageTheft — Fetch Complete</title>
+  // ── HMRC UK CSV ───────────────────────────────────────────────────────────
+  try {
+    const url = 'https://assets.publishing.service.gov.uk/media/65d4a4c61419100011f45316/2024_publication_of_NMW_named_employers.csv';
+    const r = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(20000) });
+    const text = await r.text();
+    const lines = text.split('\n').slice(0,5);
+    results.push({ source: 'HMRC_csv', status: r.status, content_type: r.headers.get('content-type'), lines: lines.join(' | ').slice(0,400) });
+  } catch(e) { results.push({ source: 'HMRC_csv', error: e.message }); }
+
+  // ── Canada ESDC ───────────────────────────────────────────────────────────
+  try {
+    const r = await fetch(
+      'https://open.canada.ca/data/en/api/3/action/datastore_search?resource_id=9fa42498-4f35-4dd5-8e0f-4a8d51e4ed6d&limit=3',
+      { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(20000) }
+    );
+    const json = await r.json();
+    const records = json?.result?.records ?? [];
+    results.push({
+      source: 'ESDC_CA', status: r.status,
+      total: json?.result?.total,
+      record_count: records.length,
+      first_keys: records[0] ? Object.keys(records[0]).join(', ') : 'NO RECORDS',
+      first_record: records[0] ? JSON.stringify(records[0]).slice(0,300) : 'none',
+    });
+  } catch(e) { results.push({ source: 'ESDC_CA', error: e.message }); }
+
+  // ── FWO Australia ─────────────────────────────────────────────────────────
+  try {
+    const r = await fetch(
+      'https://www.fairwork.gov.au/newsroom/media-releases/rss',
+      { headers: { 'User-Agent': UA, Accept: 'text/xml, application/xml' }, signal: AbortSignal.timeout(30000) }
+    );
+    const text = await r.text();
+    const itemCount = (text.match(/<item>/g) || []).length;
+    // Show first item
+    const firstItem = text.match(/<item>([\s\S]*?)<\/item>/)?.[1]?.slice(0,300) ?? 'no items';
+    results.push({ source: 'FWO_AU', status: r.status, items: itemCount, first_item: firstItem });
+  } catch(e) { results.push({ source: 'FWO_AU', error: e.message }); }
+
+  // ── Render ─────────────────────────────────────────────────────────────────
+  const html = `<!DOCTYPE html><html><head>
+<meta charset="UTF-8"><title>WageTheft Debug v3</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:system-ui,sans-serif;background:#f8f6f1;padding:32px 24px;color:#1a1814}
-h1{font-size:26px;font-weight:600;margin-bottom:6px}
-.sub{font-size:13px;color:#9a9488;margin-bottom:24px}
-.card{background:#fff;border:1px solid #e0dbd0;border-radius:8px;padding:20px 24px;margin-bottom:12px}
-h2{font-size:14px;font-weight:600;margin-bottom:14px}
-.big{font-size:40px;font-weight:700;color:#8b6914;margin-bottom:4px}
-.row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid #f0ece4;font-size:13px}
-.row:last-child{border-bottom:none}
-.ok{color:#3B6D11;font-weight:600}
-.bad{color:#A32D2D;font-weight:600}
-.warn{color:#854F0B;font-weight:600}
-.tag{font-size:11px;padding:2px 8px;border-radius:20px;font-weight:500}
-.btn{display:inline-block;margin-top:20px;background:#1a1814;color:#f8f6f1;padding:12px 24px;border-radius:6px;text-decoration:none;font-size:14px}
-</style>
-</head>
-<body>
-<h1>${stored > 0 ? '✅' : '⚠️'} Data fetch complete</h1>
-<div class="sub">Finished in ${(totalMs/1000).toFixed(1)}s · ${new Date().toUTCString()}</div>
-
+body{font-family:monospace;background:#f8f6f1;padding:24px;color:#1a1814;font-size:12px}
+h1{font-size:18px;font-family:system-ui;font-weight:600;margin-bottom:4px}
+.sub{color:#9a9488;margin-bottom:20px;font-size:11px}
+.card{background:#fff;border:1px solid #e0dbd0;border-radius:6px;padding:14px 18px;margin-bottom:10px}
+.name{font-size:13px;font-weight:700;margin-bottom:10px;font-family:system-ui;color:${`#1a1814`}}
+.ok{color:#3B6D11}.bad{color:#A32D2D}
+.row{margin-bottom:6px;display:flex;gap:10px;flex-wrap:wrap}
+.k{color:#9a9488;min-width:120px;flex-shrink:0}
+pre{background:#f0ece4;padding:8px;border-radius:4px;overflow-x:auto;white-space:pre-wrap;font-size:11px;margin-top:4px;line-height:1.5}
+</style></head><body>
+<h1>WageTheft Debug v3 — Raw API Responses</h1>
+<div class="sub">${new Date().toUTCString()}</div>
+${results.map(r => `
 <div class="card">
-  <h2>Total stored to Supabase</h2>
-  <div class="big">${stored.toLocaleString()}</div>
-  <div style="font-size:13px;color:#9a9488">${stored > 0 ? 'Records saved — go to homepage to see live data' : 'No records stored — check errors below'}</div>
-</div>
-
-<div class="card">
-  <h2>Results by source</h2>
-  ${results.map(r => `
+  <div class="name">${r.source}</div>
+  ${Object.entries(r).filter(([k])=>k!=='source').map(([k,v])=>`
   <div class="row">
-    <span>${r.source}</span>
-    <span class="${r.status==='ok'?'ok':r.status==='no_data'?'warn':'bad'}">
-      ${r.status==='ok'
-        ? `✓ ${r.fetched} fetched · ${r.stored} stored · ${r.ms}ms`
-        : r.status==='no_data'
-        ? `⚠ No data returned · ${r.ms}ms`
-        : `✗ ${r.error?.slice(0,80)} · ${r.ms}ms`}
-    </span>
+    <span class="k">${k}:</span>
+    <span class="${String(v).includes('error')||String(v).includes('Error')?'bad':''}">${
+      String(v).length > 150 ? `<pre>${String(v)}</pre>` : v
+    }</span>
   </div>`).join('')}
-</div>
-
-<a class="btn" href="/">← Go to homepage</a>
+</div>`).join('')}
 </body></html>`;
 
-  res.setHeader('Content-Type', 'text/html');
+  res.setHeader('Content-Type','text/html');
   return res.status(200).send(html);
 }
