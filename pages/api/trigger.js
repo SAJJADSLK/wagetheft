@@ -1,88 +1,98 @@
 export const config = { maxDuration: 300 };
 
-import {
-  fetchDOL, fetchUKHMRC, fetchAustralia,
-  fetchCanada, fetchIreland, fetchNetherlands, fetchEurope,
-} from '../../lib/fetchers';
-import { upsertViolations, refreshStats, logCron } from '../../lib/supabase';
-
-const SOURCES = [
-  { name: 'DOL_USA', fn: () => fetchDOL(process.env.DOL_API_KEY) },
-  { name: 'HMRC_UK', fn: fetchUKHMRC },
-  { name: 'FWO_AU',  fn: fetchAustralia },
-  { name: 'ESDC_CA', fn: fetchCanada },
-  { name: 'WRC_IE',  fn: fetchIreland },
-  { name: 'NLA_NL',  fn: fetchNetherlands },
-  { name: 'ELA_EU',  fn: fetchEurope },
-];
-
 export default async function handler(req, res) {
-  const start = Date.now();
+  const UA = 'Mozilla/5.0 WageTheft.live/1.0';
   const results = [];
-  let stored = 0;
 
-  for (const { name, fn } of SOURCES) {
-    const t = Date.now();
+  // ── DOL: try multiple URL formats to find what works ────────────────────
+  const dolKey = process.env.DOL_API_KEY;
+  
+  const dolTests = [
+    `https://data.dol.gov/get/whd_whisard/rows:5/format:json`,
+    `https://data.dol.gov/get/whd_whisard/rows/5`,
+    `https://data.dol.gov/get/whd_whisard/limit/5`,
+    `https://api.dol.gov/V1/WHD/whd_whisard?KEY=${dolKey}&$top=5`,
+  ];
+
+  for (const url of dolTests) {
     try {
-      const rows = await fn();
-      if (!rows.length) {
-        await logCron(name, 0, 'no_data');
-        results.push({ source: name, status: 'no_data', fetched: 0, stored: 0, ms: Date.now()-t });
-        continue;
-      }
-      const { count } = await upsertViolations(rows);
-      stored += count ?? 0;
-      await logCron(name, rows.length, 'ok');
-      results.push({ source: name, status: 'ok', fetched: rows.length, stored: count ?? 0, ms: Date.now()-t });
-    } catch(e) {
-      await logCron(name, 0, 'error', e.message).catch(()=>{});
-      results.push({ source: name, status: 'error', error: e.message, ms: Date.now()-t });
-    }
+      const r = await fetch(url, {
+        headers: { 'x-api-key': dolKey, 'User-Agent': UA, Accept: 'application/json' },
+        signal: AbortSignal.timeout(15000),
+      });
+      const text = await r.text();
+      results.push({ source: `DOL: ${url.split('/').slice(-2).join('/')}`, status: r.status, length: text.length, body: text.slice(0,300) });
+    } catch(e) { results.push({ source: `DOL: ${url.slice(-30)}`, error: e.message }); }
   }
 
-  try { await refreshStats(); } catch(_) {}
+  // ── HMRC: find the real current CSV URLs ────────────────────────────────
+  // Try fetching the HTML page to find links
+  try {
+    const r = await fetch(
+      'https://www.gov.uk/government/publications/named-employers-who-have-not-paid-national-minimum-wage',
+      { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(15000) }
+    );
+    const text = await r.text();
+    // Find all .csv links in the HTML
+    const csvLinks = [...text.matchAll(/href="([^"]*\.csv[^"]*)"/gi)].map(m => m[1]);
+    const assetLinks = [...text.matchAll(/href="(https?:\/\/assets\.publishing[^"]*\.csv[^"]*)"/gi)].map(m => m[1]);
+    results.push({ source: 'HMRC_html_page', status: r.status, csv_links: csvLinks.slice(0,5).join(' | '), asset_links: assetLinks.slice(0,5).join(' | '), body_start: text.slice(0,200).replace(/<[^>]+>/g,' ') });
+  } catch(e) { results.push({ source: 'HMRC_html_page', error: e.message }); }
 
-  const totalMs = Date.now() - start;
+  // ── WRC Ireland: show ALL items (no filter) ──────────────────────────────
+  try {
+    const r = await fetch('https://www.workplacerelations.ie/en/news_media/press_releases/rss', {
+      headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(20000),
+    });
+    const text = await r.text();
+    const allItems = [...text.matchAll(/<item>([\s\S]*?)<\/item>/g)];
+    const titles = allItems.slice(0,5).map(([,ix]) => {
+      const t = ix.match(/<title><!\[CDATA\[(.*?)\]\]>/i)?.[1] ?? ix.match(/<title>(.*?)<\/title>/i)?.[1] ?? '';
+      return t.slice(0,80);
+    });
+    results.push({ source: 'WRC_IE', status: r.status, total_items: allItems.length, sample_titles: titles.join(' || ') });
+  } catch(e) { results.push({ source: 'WRC_IE', error: e.message }); }
 
-  const html = `<!DOCTYPE html><html><head>
-<meta charset="UTF-8"><title>WageTheft — Fetch</title>
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:system-ui,sans-serif;background:#f8f6f1;padding:32px 24px;color:#1a1814}
-h1{font-size:26px;font-weight:600;margin-bottom:6px}
-.sub{font-size:13px;color:#9a9488;margin-bottom:24px}
-.card{background:#fff;border:1px solid #e0dbd0;border-radius:8px;padding:20px 24px;margin-bottom:12px}
-h2{font-size:14px;font-weight:600;margin-bottom:14px}
-.big{font-size:44px;font-weight:700;color:#8b6914;margin-bottom:4px}
-.row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid #f0ece4;font-size:13px}
-.row:last-child{border-bottom:none}
-.ok{color:#3B6D11;font-weight:600}.bad{color:#A32D2D;font-weight:600}.warn{color:#854F0B}
-.btn{display:inline-block;margin-top:20px;background:#1a1814;color:#f8f6f1;padding:12px 28px;border-radius:6px;text-decoration:none;font-size:14px}
+  // ── NLA Netherlands: show ALL items ─────────────────────────────────────
+  try {
+    const r = await fetch('https://www.nlarbeidsinspectie.nl/actueel/nieuws/rss', {
+      headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(20000),
+    });
+    const text = await r.text();
+    const allItems = [...text.matchAll(/<item>([\s\S]*?)<\/item>/g)];
+    const titles = allItems.slice(0,5).map(([,ix]) => {
+      const t = ix.match(/<title><!\[CDATA\[(.*?)\]\]>/i)?.[1] ?? ix.match(/<title>(.*?)<\/title>/i)?.[1] ?? '';
+      return t.slice(0,80);
+    });
+    results.push({ source: 'NLA_NL', status: r.status, total_items: allItems.length, sample_titles: titles.join(' || ') });
+  } catch(e) { results.push({ source: 'NLA_NL', error: e.message }); }
+
+  // ── ELA Europe: show ALL items ───────────────────────────────────────────
+  try {
+    const r = await fetch('https://www.ela.europa.eu/en/rss/news', {
+      headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(20000),
+    });
+    const text = await r.text();
+    const allItems = [...text.matchAll(/<item>([\s\S]*?)<\/item>/g)];
+    const titles = allItems.slice(0,5).map(([,ix]) => {
+      const t = ix.match(/<title><!\[CDATA\[(.*?)\]\]>/i)?.[1] ?? ix.match(/<title>(.*?)<\/title>/i)?.[1] ?? '';
+      return t.slice(0,80);
+    });
+    results.push({ source: 'ELA_EU', status: r.status, total_items: allItems.length, sample_titles: titles.join(' || ') });
+  } catch(e) { results.push({ source: 'ELA_EU', error: e.message }); }
+
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Debug v5</title>
+<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:monospace;background:#f8f6f1;padding:24px;font-size:12px}
+h1{font-size:16px;font-family:system-ui;margin-bottom:16px}.card{background:#fff;border:1px solid #e0dbd0;border-radius:6px;padding:14px 18px;margin-bottom:10px}
+.n{font-size:13px;font-weight:700;margin-bottom:10px;font-family:system-ui}
+.row{display:flex;gap:10px;margin-bottom:5px;padding-bottom:5px;border-bottom:1px solid #f5f0e8;flex-wrap:wrap}
+.row:last-child{border:none}.k{color:#9a9488;min-width:120px;flex-shrink:0}
+pre{background:#f0ece4;padding:8px;border-radius:4px;overflow-x:auto;white-space:pre-wrap;font-size:11px;margin-top:4px}
 </style></head><body>
-<h1>${stored>0?'✅':'⚠️'} Data fetch complete</h1>
-<div class="sub">Finished in ${(totalMs/1000).toFixed(1)}s · ${new Date().toUTCString()}</div>
-
-<div class="card">
-  <h2>Total stored to Supabase</h2>
-  <div class="big">${stored.toLocaleString()}</div>
-  <div style="font-size:13px;color:#9a9488">${stored>0?'Go to homepage to see live records':'No records — see errors below'}</div>
-</div>
-
-<div class="card">
-  <h2>Results by source</h2>
-  ${results.map(r=>`<div class="row">
-    <span>${r.source}</span>
-    <span class="${r.status==='ok'?'ok':r.status==='no_data'?'warn':'bad'}">
-      ${r.status==='ok'
-        ?`✓ ${r.fetched} fetched · ${r.stored} stored · ${r.ms}ms`
-        :r.status==='no_data'
-        ?`⚠ No data · ${r.ms}ms`
-        :`✗ ${(r.error||'').slice(0,60)} · ${r.ms}ms`}
-    </span>
-  </div>`).join('')}
-</div>
-
-<a class="btn" href="/">← Go to homepage</a>
+<h1>Debug v5 — ${new Date().toUTCString()}</h1>
+${results.map(r=>`<div class="card"><div class="n">${r.source}</div>
+${Object.entries(r).filter(([k])=>k!=='source').map(([k,v])=>`<div class="row"><span class="k">${k}:</span><span>${String(v).length>200?`<pre>${v}</pre>`:v}</span></div>`).join('')}
+</div>`).join('')}
 </body></html>`;
 
   res.setHeader('Content-Type','text/html');
