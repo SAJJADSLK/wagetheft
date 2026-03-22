@@ -1,98 +1,61 @@
-export const config = { maxDuration: 300 };
+export const config = { maxDuration: 60 };
 
 export default async function handler(req, res) {
   const UA = 'Mozilla/5.0 WageTheft.live/1.0';
-  const results = [];
-
-  // ── DOL: try multiple URL formats to find what works ────────────────────
   const dolKey = process.env.DOL_API_KEY;
-  
-  const dolTests = [
-    `https://data.dol.gov/get/whd_whisard/rows:5/format:json`,
-    `https://data.dol.gov/get/whd_whisard/rows/5`,
-    `https://data.dol.gov/get/whd_whisard/limit/5`,
-    `https://api.dol.gov/V1/WHD/whd_whisard?KEY=${dolKey}&$top=5`,
-  ];
 
-  for (const url of dolTests) {
-    try {
-      const r = await fetch(url, {
-        headers: { 'x-api-key': dolKey, 'User-Agent': UA, Accept: 'application/json' },
-        signal: AbortSignal.timeout(15000),
-      });
-      const text = await r.text();
-      results.push({ source: `DOL: ${url.split('/').slice(-2).join('/')}`, status: r.status, length: text.length, body: text.slice(0,300) });
-    } catch(e) { results.push({ source: `DOL: ${url.slice(-30)}`, error: e.message }); }
-  }
-
-  // ── HMRC: find the real current CSV URLs ────────────────────────────────
-  // Try fetching the HTML page to find links
+  // DOL confirmed working: data.dol.gov/get/whd_whisard/rows:5/format:json
+  // 11015 bytes for 5 rows - show full body to see structure
+  let dolBody = '';
   try {
     const r = await fetch(
-      'https://www.gov.uk/government/publications/named-employers-who-have-not-paid-national-minimum-wage',
-      { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(15000) }
+      `https://data.dol.gov/get/whd_whisard/rows:5/format:json`,
+      { headers: { 'x-api-key': dolKey, 'User-Agent': UA }, signal: AbortSignal.timeout(20000) }
     );
-    const text = await r.text();
-    // Find all .csv links in the HTML
-    const csvLinks = [...text.matchAll(/href="([^"]*\.csv[^"]*)"/gi)].map(m => m[1]);
-    const assetLinks = [...text.matchAll(/href="(https?:\/\/assets\.publishing[^"]*\.csv[^"]*)"/gi)].map(m => m[1]);
-    results.push({ source: 'HMRC_html_page', status: r.status, csv_links: csvLinks.slice(0,5).join(' | '), asset_links: assetLinks.slice(0,5).join(' | '), body_start: text.slice(0,200).replace(/<[^>]+>/g,' ') });
-  } catch(e) { results.push({ source: 'HMRC_html_page', error: e.message }); }
+    dolBody = await r.text();
+  } catch(e) { dolBody = 'ERROR: ' + e.message; }
 
-  // ── WRC Ireland: show ALL items (no filter) ──────────────────────────────
+  // HMRC - try correct URL format
+  let hmrcBody = '';
+  const hmrcUrls = [
+    'https://www.gov.uk/government/publications/named-employers-who-have-not-paid-national-minimum-wage',
+    'https://www.gov.uk/guidance/named-employers-who-have-not-paid-national-minimum-wage',
+    'https://assets.publishing.service.gov.uk/media/65d4a4c61419100011f45316/2024_publication_of_NMW_named_employers.csv',
+    'https://assets.publishing.service.gov.uk/media/6537d5e70466c1000d759cda/23_24_NMW_Naming_Scheme_Employers.csv',
+  ];
+  const hmrcResults = [];
+  for (const u of hmrcUrls) {
+    try {
+      const r = await fetch(u, { headers: {'User-Agent': UA}, signal: AbortSignal.timeout(15000) });
+      const text = await r.text();
+      hmrcResults.push(`${u.split('/').pop()} → HTTP ${r.status} · ${text.length} bytes · ${text.slice(0,80).replace(/\n/g,' ')}`);
+    } catch(e) { hmrcResults.push(`${u.split('/').pop()} → ERROR: ${e.message}`); }
+  }
+
+  // WRC Ireland RSS - show raw first 2 items
+  let wrcBody = '';
   try {
     const r = await fetch('https://www.workplacerelations.ie/en/news_media/press_releases/rss', {
-      headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(20000),
+      headers: {'User-Agent': UA}, signal: AbortSignal.timeout(20000)
     });
     const text = await r.text();
-    const allItems = [...text.matchAll(/<item>([\s\S]*?)<\/item>/g)];
-    const titles = allItems.slice(0,5).map(([,ix]) => {
-      const t = ix.match(/<title><!\[CDATA\[(.*?)\]\]>/i)?.[1] ?? ix.match(/<title>(.*?)<\/title>/i)?.[1] ?? '';
-      return t.slice(0,80);
-    });
-    results.push({ source: 'WRC_IE', status: r.status, total_items: allItems.length, sample_titles: titles.join(' || ') });
-  } catch(e) { results.push({ source: 'WRC_IE', error: e.message }); }
+    const items = [...text.matchAll(/<item>([\s\S]*?)<\/item>/g)].slice(0,3);
+    wrcBody = `HTTP ${r.status} · ${items.length} items\n` + items.map(([,ix]) => ix.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim().slice(0,150)).join('\n---\n');
+  } catch(e) { wrcBody = 'ERROR: ' + e.message; }
 
-  // ── NLA Netherlands: show ALL items ─────────────────────────────────────
-  try {
-    const r = await fetch('https://www.nlarbeidsinspectie.nl/actueel/nieuws/rss', {
-      headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(20000),
-    });
-    const text = await r.text();
-    const allItems = [...text.matchAll(/<item>([\s\S]*?)<\/item>/g)];
-    const titles = allItems.slice(0,5).map(([,ix]) => {
-      const t = ix.match(/<title><!\[CDATA\[(.*?)\]\]>/i)?.[1] ?? ix.match(/<title>(.*?)<\/title>/i)?.[1] ?? '';
-      return t.slice(0,80);
-    });
-    results.push({ source: 'NLA_NL', status: r.status, total_items: allItems.length, sample_titles: titles.join(' || ') });
-  } catch(e) { results.push({ source: 'NLA_NL', error: e.message }); }
-
-  // ── ELA Europe: show ALL items ───────────────────────────────────────────
-  try {
-    const r = await fetch('https://www.ela.europa.eu/en/rss/news', {
-      headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(20000),
-    });
-    const text = await r.text();
-    const allItems = [...text.matchAll(/<item>([\s\S]*?)<\/item>/g)];
-    const titles = allItems.slice(0,5).map(([,ix]) => {
-      const t = ix.match(/<title><!\[CDATA\[(.*?)\]\]>/i)?.[1] ?? ix.match(/<title>(.*?)<\/title>/i)?.[1] ?? '';
-      return t.slice(0,80);
-    });
-    results.push({ source: 'ELA_EU', status: r.status, total_items: allItems.length, sample_titles: titles.join(' || ') });
-  } catch(e) { results.push({ source: 'ELA_EU', error: e.message }); }
-
-  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Debug v5</title>
-<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:monospace;background:#f8f6f1;padding:24px;font-size:12px}
-h1{font-size:16px;font-family:system-ui;margin-bottom:16px}.card{background:#fff;border:1px solid #e0dbd0;border-radius:6px;padding:14px 18px;margin-bottom:10px}
-.n{font-size:13px;font-weight:700;margin-bottom:10px;font-family:system-ui}
-.row{display:flex;gap:10px;margin-bottom:5px;padding-bottom:5px;border-bottom:1px solid #f5f0e8;flex-wrap:wrap}
-.row:last-child{border:none}.k{color:#9a9488;min-width:120px;flex-shrink:0}
-pre{background:#f0ece4;padding:8px;border-radius:4px;overflow-x:auto;white-space:pre-wrap;font-size:11px;margin-top:4px}
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Debug v6</title>
+<style>body{font-family:monospace;background:#f8f6f1;padding:20px;font-size:12px}
+h2{font-family:system-ui;font-size:14px;margin:16px 0 8px;font-weight:700}
+pre{background:#fff;border:1px solid #ddd;padding:12px;border-radius:4px;overflow-x:auto;white-space:pre-wrap;font-size:11px;line-height:1.5;max-height:400px;overflow-y:auto}
 </style></head><body>
-<h1>Debug v5 — ${new Date().toUTCString()}</h1>
-${results.map(r=>`<div class="card"><div class="n">${r.source}</div>
-${Object.entries(r).filter(([k])=>k!=='source').map(([k,v])=>`<div class="row"><span class="k">${k}:</span><span>${String(v).length>200?`<pre>${v}</pre>`:v}</span></div>`).join('')}
-</div>`).join('')}
+<h2>DOL Full Body (first 2000 chars):</h2>
+<pre>${dolBody.slice(0,2000).replace(/</g,'&lt;')}</pre>
+
+<h2>HMRC URL Tests:</h2>
+<pre>${hmrcResults.join('\n').replace(/</g,'&lt;')}</pre>
+
+<h2>WRC Ireland RSS (first 3 items raw):</h2>
+<pre>${wrcBody.replace(/</g,'&lt;')}</pre>
 </body></html>`;
 
   res.setHeader('Content-Type','text/html');
