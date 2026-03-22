@@ -1,107 +1,112 @@
 export const config = { maxDuration: 300 };
 
 export default async function handler(req, res) {
+  const UA  = 'WageTheft.live/1.0 (data@wagetheft.live)';
   const results = [];
-  const UA = 'Mozilla/5.0 WageTheft.live/1.0';
+  const start = Date.now();
 
-  // ── DOL USA ───────────────────────────────────────────────────────────────
+  // ── DOL USA — correct format: data.dol.gov/get/DATASET/limit/N ──────────
+  // Header: x-api-key (confirmed from DOL GitHub issues)
   try {
     const key = process.env.DOL_API_KEY;
-    // Try the enforcedata direct JSON endpoint
+    const url = `https://data.dol.gov/get/whd_whisard/limit/5`;
+    const r = await fetch(url, {
+      headers: { 'x-api-key': key, 'User-Agent': UA, Accept: 'application/json' },
+      signal: AbortSignal.timeout(20000),
+    });
+    const text = await r.text();
+    results.push({ source: 'DOL_correct_format', status: r.status, body: text.slice(0, 400) });
+  } catch(e) { results.push({ source: 'DOL_correct_format', error: e.message }); }
+
+  // ── HMRC — use gov.uk content API dynamically ────────────────────────────
+  try {
     const r = await fetch(
-      `https://data.dol.gov/get/whd_whisard/rows:5/format:json`,
-      { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(15000) }
+      'https://www.gov.uk/api/content/government/publications/named-employers-who-have-not-paid-national-minimum-wage',
+      { headers: { Accept: 'application/json', 'User-Agent': UA }, signal: AbortSignal.timeout(20000) }
     );
     const text = await r.text();
-    results.push({ source: 'DOL_direct', status: r.status, body: text.slice(0,500) });
-  } catch(e) { results.push({ source: 'DOL_direct', error: e.message }); }
+    const isJson = text.trim().startsWith('{');
+    let csvUrls = [];
+    if (isJson) {
+      const json = JSON.parse(text);
+      const atts = json?.details?.attachments ?? [];
+      csvUrls = atts.filter(a => (a.url||'').toLowerCase().includes('.csv')).map(a => a.url);
+    }
+    results.push({
+      source: 'HMRC_content_api', status: r.status,
+      is_json: isJson, csv_count: csvUrls.length,
+      csv_urls: csvUrls.join(' | ').slice(0, 300) || 'NONE FOUND',
+      raw_start: text.slice(0, 100),
+    });
 
-  try {
-    const key = process.env.DOL_API_KEY;
-    const r = await fetch(
-      `https://apiprod.dol.gov/v4/get/WHD/whd_whisard?limit=3&offset=0`,
-      { headers: { 'User-Agent': UA, 'X-API-Key': key, Accept: 'application/json' }, signal: AbortSignal.timeout(15000) }
-    );
-    const text = await r.text();
-    results.push({ source: 'DOL_apiprod', status: r.status, body: text.slice(0,500) });
-  } catch(e) { results.push({ source: 'DOL_apiprod', error: e.message }); }
+    // If we found a CSV, try fetching first 3 lines
+    if (csvUrls[0]) {
+      const csvR = await fetch(csvUrls[0], { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(20000) });
+      const csvText = await csvR.text();
+      const lines = csvText.split('\n').slice(0, 4);
+      results.push({ source: 'HMRC_csv_preview', status: csvR.status, lines: lines.join(' || ').slice(0, 300) });
+    }
+  } catch(e) { results.push({ source: 'HMRC_content_api', error: e.message }); }
 
-  try {
-    const key = process.env.DOL_API_KEY;
-    const r = await fetch(
-      `https://api.dol.gov/V1/WHD/whd_whisard?KEY=${key}&$top=3`,
-      { headers: { 'User-Agent': UA, Accept: 'application/json' }, signal: AbortSignal.timeout(15000) }
-    );
-    const text = await r.text();
-    results.push({ source: 'DOL_v1', status: r.status, body: text.slice(0,500) });
-  } catch(e) { results.push({ source: 'DOL_v1', error: e.message }); }
-
-  // ── HMRC UK CSV ───────────────────────────────────────────────────────────
-  try {
-    const url = 'https://assets.publishing.service.gov.uk/media/65d4a4c61419100011f45316/2024_publication_of_NMW_named_employers.csv';
-    const r = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(20000) });
-    const text = await r.text();
-    const lines = text.split('\n').slice(0,5);
-    results.push({ source: 'HMRC_csv', status: r.status, content_type: r.headers.get('content-type'), lines: lines.join(' | ').slice(0,400) });
-  } catch(e) { results.push({ source: 'HMRC_csv', error: e.message }); }
-
-  // ── Canada ESDC ───────────────────────────────────────────────────────────
+  // ── Canada — correct source: public naming HTML page ─────────────────────
+  // The CKAN resource ID 9fa42498 is wrong. Real data is at canada.ca HTML page
   try {
     const r = await fetch(
-      'https://open.canada.ca/data/en/api/3/action/datastore_search?resource_id=9fa42498-4f35-4dd5-8e0f-4a8d51e4ed6d&limit=3',
+      'https://www.canada.ca/en/employment-social-development/corporate/portfolio/labour/public-naming-employers-code-regulations.html',
       { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(20000) }
     );
-    const json = await r.json();
-    const records = json?.result?.records ?? [];
+    const text = await r.text();
+    // Count employer mentions (they appear as list items)
+    const liCount = (text.match(/<li>/g) || []).length;
+    const hasRogers = text.includes('Rogers');
+    const hasLogistec = text.includes('Logistec');
     results.push({
-      source: 'ESDC_CA', status: r.status,
-      total: json?.result?.total,
-      record_count: records.length,
-      first_keys: records[0] ? Object.keys(records[0]).join(', ') : 'NO RECORDS',
-      first_record: records[0] ? JSON.stringify(records[0]).slice(0,300) : 'none',
+      source: 'CANADA_naming_page', status: r.status,
+      page_size_kb: Math.round(text.length / 1024),
+      li_count: liCount,
+      has_rogers: hasRogers,   // Known 2025 entry
+      has_logistec: hasLogistec, // Known 2025 entry
+      preview: text.slice(text.indexOf('<main'), text.indexOf('<main') + 500).replace(/<[^>]+>/g,'').replace(/\s+/g,' ').slice(0,300),
     });
-  } catch(e) { results.push({ source: 'ESDC_CA', error: e.message }); }
+  } catch(e) { results.push({ source: 'CANADA_naming_page', error: e.message }); }
 
-  // ── FWO Australia ─────────────────────────────────────────────────────────
+  // ── FWO Australia — longer timeout ───────────────────────────────────────
   try {
     const r = await fetch(
       'https://www.fairwork.gov.au/newsroom/media-releases/rss',
-      { headers: { 'User-Agent': UA, Accept: 'text/xml, application/xml' }, signal: AbortSignal.timeout(30000) }
+      { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(90000) }
     );
     const text = await r.text();
-    const itemCount = (text.match(/<item>/g) || []).length;
-    // Show first item
-    const firstItem = text.match(/<item>([\s\S]*?)<\/item>/)?.[1]?.slice(0,300) ?? 'no items';
-    results.push({ source: 'FWO_AU', status: r.status, items: itemCount, first_item: firstItem });
+    const items = (text.match(/<item>/g) || []).length;
+    const firstTitle = text.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/)?.[1] ?? text.match(/<title>(.*?)<\/title>/g)?.[1] ?? 'not found';
+    results.push({ source: 'FWO_AU', status: r.status, items, firstTitle: firstTitle.slice(0,100) });
   } catch(e) { results.push({ source: 'FWO_AU', error: e.message }); }
 
-  // ── Render ─────────────────────────────────────────────────────────────────
-  const html = `<!DOCTYPE html><html><head>
-<meta charset="UTF-8"><title>WageTheft Debug v3</title>
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:monospace;background:#f8f6f1;padding:24px;color:#1a1814;font-size:12px}
-h1{font-size:18px;font-family:system-ui;font-weight:600;margin-bottom:4px}
-.sub{color:#9a9488;margin-bottom:20px;font-size:11px}
+  // ── Supabase confirm tables ───────────────────────────────────────────────
+  try {
+    const { createClient } = await import('@supabase/supabase-js');
+    const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY, { auth: { persistSession: false } });
+    const { count, error } = await sb.from('violations').select('*', { count: 'exact', head: true });
+    results.push({ source: 'SUPABASE', ok: !error, violations_rows: error ? `ERROR: ${error.message}` : count });
+  } catch(e) { results.push({ source: 'SUPABASE', error: e.message }); }
+
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Debug v4</title>
+<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:monospace;background:#f8f6f1;padding:24px;font-size:12px}
+h1{font-size:16px;font-family:system-ui;margin-bottom:4px}
+.sub{color:#9a9488;margin-bottom:16px;font-size:11px}
 .card{background:#fff;border:1px solid #e0dbd0;border-radius:6px;padding:14px 18px;margin-bottom:10px}
-.name{font-size:13px;font-weight:700;margin-bottom:10px;font-family:system-ui;color:${`#1a1814`}}
+.n{font-size:13px;font-weight:700;margin-bottom:10px;font-family:system-ui}
 .ok{color:#3B6D11}.bad{color:#A32D2D}
-.row{margin-bottom:6px;display:flex;gap:10px;flex-wrap:wrap}
-.k{color:#9a9488;min-width:120px;flex-shrink:0}
-pre{background:#f0ece4;padding:8px;border-radius:4px;overflow-x:auto;white-space:pre-wrap;font-size:11px;margin-top:4px;line-height:1.5}
+.row{margin-bottom:5px;display:flex;gap:10px;flex-wrap:wrap;padding-bottom:5px;border-bottom:1px solid #f5f0e8}
+.row:last-child{border:none}.k{color:#9a9488;min-width:120px;flex-shrink:0}
+pre{background:#f0ece4;padding:8px;border-radius:4px;overflow-x:auto;white-space:pre-wrap;font-size:11px;margin-top:4px;line-height:1.4}
 </style></head><body>
-<h1>WageTheft Debug v3 — Raw API Responses</h1>
-<div class="sub">${new Date().toUTCString()}</div>
-${results.map(r => `
-<div class="card">
-  <div class="name">${r.source}</div>
-  ${Object.entries(r).filter(([k])=>k!=='source').map(([k,v])=>`
-  <div class="row">
-    <span class="k">${k}:</span>
-    <span class="${String(v).includes('error')||String(v).includes('Error')?'bad':''}">${
-      String(v).length > 150 ? `<pre>${String(v)}</pre>` : v
-    }</span>
-  </div>`).join('')}
+<h1>WageTheft Debug v4</h1>
+<div class="sub">${new Date().toUTCString()} · ${((Date.now()-start)/1000).toFixed(1)}s</div>
+${results.map(r=>`<div class="card">
+<div class="n">${r.source}</div>
+${Object.entries(r).filter(([k])=>k!=='source').map(([k,v])=>`
+<div class="row"><span class="k">${k}:</span><span>${String(v).length>200?`<pre>${v}</pre>`:v}</span></div>`).join('')}
 </div>`).join('')}
 </body></html>`;
 
