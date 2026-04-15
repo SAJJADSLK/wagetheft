@@ -1,19 +1,21 @@
 export const config = { maxDuration: 300 };
 
 import {
-  fetchDOL, fetchUKHMRC, fetchAustralia,
-  fetchCanada, fetchIreland, fetchNetherlands, fetchEurope,
+  fetchDOL, fetchOSHA, fetchUKHMRC, fetchAustralia,
+  fetchCanada, fetchNewZealand, fetchIreland, fetchNetherlands, fetchEurope,
 } from '../../lib/fetchers';
 import { upsertViolations, refreshStats, logCron, getStats } from '../../lib/supabase';
 
 const SOURCES = [
-  { name: 'DOL_USA',  fn: () => fetchDOL(process.env.DOL_API_KEY), label: '🇺🇸 US Dept of Labor' },
-  { name: 'HMRC_UK',  fn: fetchUKHMRC,     label: '🇬🇧 HMRC UK' },
-  { name: 'ESDC_CA',  fn: fetchCanada,     label: '🇨🇦 Canada ESDC' },
-  { name: 'FWO_AU',   fn: fetchAustralia,  label: '🇦🇺 Australia FWO' },
-  { name: 'WRC_IE',   fn: fetchIreland,    label: '🇮🇪 Ireland WRC' },
-  { name: 'NLA_NL',   fn: fetchNetherlands,label: '🇳🇱 Netherlands NLA' },
-  { name: 'ELA_EU',   fn: fetchEurope,     label: '🇪🇺 ELA Europe' },
+  { name: 'DOL_USA',  fn: () => fetchDOL(process.env.DOL_API_KEY),  label: '🇺🇸 US Dept of Labor (WHD)' },
+  { name: 'OSHA_USA', fn: () => fetchOSHA(process.env.DOL_API_KEY), label: '🇺🇸 US OSHA Enforcement' },
+  { name: 'HMRC_UK',  fn: fetchUKHMRC,      label: '🇬🇧 HMRC UK' },
+  { name: 'ESDC_CA',  fn: fetchCanada,      label: '🇨🇦 Canada ESDC' },
+  { name: 'FWO_AU',   fn: fetchAustralia,   label: '🇦🇺 Australia FWO' },
+  { name: 'MBIE_NZ',  fn: fetchNewZealand,  label: '🇳🇿 New Zealand MBIE' },
+  { name: 'WRC_IE',   fn: fetchIreland,     label: '🇮🇪 Ireland WRC' },
+  { name: 'NLA_NL',   fn: fetchNetherlands, label: '🇳🇱 Netherlands NLA' },
+  { name: 'ELA_EU',   fn: fetchEurope,      label: '🇪🇺 ELA Europe' },
 ];
 
 export default async function handler(req, res) {
