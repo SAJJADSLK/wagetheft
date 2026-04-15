@@ -73,9 +73,11 @@ h2{font-size:13px;font-weight:600;margin-bottom:14px;color:#9a9488;text-transfor
   ${results.map(r=>`<div class="row">
     <span>${r.label}</span>
     <span class="${r.status==='ok'?'ok':r.status==='no_data'?'warn':'bad'}">
-      ${r.status==='ok'?`✓ ${r.fetched} fetched · ${r.stored} new`
-        :r.status==='no_data'?'No data'
-        :`✗ ${(r.error||'').slice(0,60)}`}
+      ${r.status==='ok'
+        ?`✓ ${r.fetched} fetched · ${r.stored} new`
+        :r.status==='no_data'
+          ?'No data — check <a href="/api/debug" style="color:inherit">debug panel</a>'
+          :`✗ ${(r.error||'').slice(0,80)}`}
       <span style="color:#ccc;margin-left:8px">${r.ms}ms</span>
     </span>
   </div>`).join('')}
