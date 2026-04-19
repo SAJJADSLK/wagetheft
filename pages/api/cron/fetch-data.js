@@ -12,11 +12,9 @@
 
 import {
   fetchDOL,
-  fetchOSHA,
   fetchUKHMRC,
   fetchAustralia,
   fetchCanada,
-  fetchNewZealand,
   fetchIreland,
   fetchNetherlands,
   fetchEurope,
@@ -26,15 +24,13 @@ import { upsertViolations, refreshStats, logCron, getStats } from '../../../lib/
 export const config = { maxDuration: 300 };
 
 const SOURCES = [
-  { name: 'DOL_USA',  fn: () => fetchDOL(process.env.DOL_API_KEY),  note: 'api.dol.gov V1 OData — WHD violations (FIXED)' },
-  { name: 'OSHA_USA', fn: () => fetchOSHA(process.env.DOL_API_KEY), note: 'api.dol.gov V1 — OSHA enforcement (NEW)' },
-  { name: 'HMRC_UK',  fn: fetchUKHMRC,     note: 'gov.uk Content API → XLSX (FIXED parsing)' },
-  { name: 'ESDC_CA',  fn: fetchCanada,     note: 'canada.ca HTML scrape — confirmed working' },
-  { name: 'FWO_AU',   fn: fetchAustralia,  note: 'data.gov.au CKAN — replaces blocked fairwork.gov.au (FIXED)' },
-  { name: 'MBIE_NZ',  fn: fetchNewZealand, note: 'employment.govt.nz public register (NEW)' },
-  { name: 'WRC_IE',   fn: fetchIreland,    note: 'No public API — stub' },
-  { name: 'NLA_NL',   fn: fetchNetherlands,note: 'No public RSS — stub' },
-  { name: 'ELA_EU',   fn: fetchEurope,     note: 'No public RSS — stub' },
+  { name: 'DOL_USA',  fn: () => fetchDOL(process.env.DOL_API_KEY), note: 'api.dol.gov V1 — ~2,500 records' },
+  { name: 'HMRC_UK',  fn: fetchUKHMRC,    note: 'gov.uk NMW CSV — ~524/year' },
+  { name: 'FWO_AU',   fn: fetchAustralia, note: 'fairwork.gov.au RSS' },
+  { name: 'ESDC_CA',  fn: fetchCanada,    note: 'open.canada.ca CKAN' },
+  { name: 'WRC_IE',   fn: fetchIreland,   note: 'workplacerelations.ie RSS' },
+  { name: 'NLA_NL',   fn: fetchNetherlands, note: 'nlarbeidsinspectie.nl RSS' },
+  { name: 'ELA_EU',   fn: fetchEurope,    note: 'ela.europa.eu RSS' },
 ];
 
 export default async function handler(req, res) {

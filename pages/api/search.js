@@ -13,7 +13,7 @@ export default async function handler(req, res) {
   // Validate inputs
   const pageNum = Math.max(0, parseInt(page, 10) || 0);
   const cleanQ  = String(q).trim().slice(0, 200);
-  const cleanC  = ['', 'USA', 'UK', 'Australia', 'Canada', 'New Zealand', 'Ireland', 'Netherlands', 'EU'].includes(country) ? country : '';
+  const cleanC  = ['', 'USA', 'UK', 'Australia', 'Canada', 'Ireland', 'Netherlands', 'EU'].includes(country) ? country : '';
 
   try {
     const data = await searchViolations(cleanQ, { country: cleanC, page: pageNum });

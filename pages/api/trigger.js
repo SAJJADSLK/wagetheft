@@ -1,21 +1,19 @@
 export const config = { maxDuration: 300 };
 
 import {
-  fetchDOL, fetchOSHA, fetchUKHMRC, fetchAustralia,
-  fetchCanada, fetchNewZealand, fetchIreland, fetchNetherlands, fetchEurope,
+  fetchDOL, fetchUKHMRC, fetchAustralia,
+  fetchCanada, fetchIreland, fetchNetherlands, fetchEurope,
 } from '../../lib/fetchers';
 import { upsertViolations, refreshStats, logCron, getStats } from '../../lib/supabase';
 
 const SOURCES = [
-  { name: 'DOL_USA',  fn: () => fetchDOL(process.env.DOL_API_KEY),  label: '🇺🇸 US Dept of Labor (WHD)' },
-  { name: 'OSHA_USA', fn: () => fetchOSHA(process.env.DOL_API_KEY), label: '🇺🇸 US OSHA Enforcement' },
-  { name: 'HMRC_UK',  fn: fetchUKHMRC,      label: '🇬🇧 HMRC UK' },
-  { name: 'ESDC_CA',  fn: fetchCanada,      label: '🇨🇦 Canada ESDC' },
-  { name: 'FWO_AU',   fn: fetchAustralia,   label: '🇦🇺 Australia FWO' },
-  { name: 'MBIE_NZ',  fn: fetchNewZealand,  label: '🇳🇿 New Zealand MBIE' },
-  { name: 'WRC_IE',   fn: fetchIreland,     label: '🇮🇪 Ireland WRC' },
-  { name: 'NLA_NL',   fn: fetchNetherlands, label: '🇳🇱 Netherlands NLA' },
-  { name: 'ELA_EU',   fn: fetchEurope,      label: '🇪🇺 ELA Europe' },
+  { name: 'DOL_USA',  fn: () => fetchDOL(process.env.DOL_API_KEY), label: '🇺🇸 US Dept of Labor' },
+  { name: 'HMRC_UK',  fn: fetchUKHMRC,     label: '🇬🇧 HMRC UK' },
+  { name: 'ESDC_CA',  fn: fetchCanada,     label: '🇨🇦 Canada ESDC' },
+  { name: 'FWO_AU',   fn: fetchAustralia,  label: '🇦🇺 Australia FWO' },
+  { name: 'WRC_IE',   fn: fetchIreland,    label: '🇮🇪 Ireland WRC' },
+  { name: 'NLA_NL',   fn: fetchNetherlands,label: '🇳🇱 Netherlands NLA' },
+  { name: 'ELA_EU',   fn: fetchEurope,     label: '🇪🇺 ELA Europe' },
 ];
 
 export default async function handler(req, res) {
@@ -73,11 +71,9 @@ h2{font-size:13px;font-weight:600;margin-bottom:14px;color:#9a9488;text-transfor
   ${results.map(r=>`<div class="row">
     <span>${r.label}</span>
     <span class="${r.status==='ok'?'ok':r.status==='no_data'?'warn':'bad'}">
-      ${r.status==='ok'
-        ?`✓ ${r.fetched} fetched · ${r.stored} new`
-        :r.status==='no_data'
-          ?'No data — check <a href="/api/debug" style="color:inherit">debug panel</a>'
-          :`✗ ${(r.error||'').slice(0,80)}`}
+      ${r.status==='ok'?`✓ ${r.fetched} fetched · ${r.stored} new`
+        :r.status==='no_data'?'No data'
+        :`✗ ${(r.error||'').slice(0,60)}`}
       <span style="color:#ccc;margin-left:8px">${r.ms}ms</span>
     </span>
   </div>`).join('')}
