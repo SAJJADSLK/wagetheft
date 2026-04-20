@@ -13,22 +13,25 @@ export default function Nav() {
     }}>
       <Link href="/" style={{
         fontFamily: 'var(--serif)', fontSize: '22px', fontWeight: 600,
-        letterSpacing: '.04em', color: '#1a1814',
+        letterSpacing: '.04em', color: '#1a1814', textDecoration: 'none',
       }}>
         Wage<em style={{ fontStyle: 'italic', color: '#8b6914' }}>Theft</em>.live
       </Link>
 
-      <div style={{ display: 'flex', gap: '32px', alignItems: 'center' }}>
+      <div style={{ display: 'flex', gap: '28px', alignItems: 'center' }}>
         {[
-          { href: '/search',        label: 'Search'       },
-          { href: '/top-offenders', label: 'Top Offenders'},
-          { href: '/about',         label: 'About & Data' },
+          { href: '/search',           label: 'Search'       },
+          { href: '/top-offenders',    label: 'Top Offenders'},
+          { href: '/rights',           label: 'Your Rights'  },
+          { href: '/tools/calculator', label: 'Calculator'   },
+          { href: '/red-flags',        label: 'Red Flags'    },
+          { href: '/about',            label: 'About'        },
         ].map(({ href, label }) => (
           <Link key={href} href={href} style={{
             fontSize: '11px', letterSpacing: '.1em', textTransform: 'uppercase',
-            color: pathname === href ? '#1a1814' : '#9a9488',
-            borderBottom: pathname === href ? '2px solid #1a1814' : '2px solid transparent',
-            paddingBottom: '2px', transition: 'color .2s',
+            color: pathname.startsWith(href) && href !== '/' ? '#1a1814' : pathname === href ? '#1a1814' : '#9a9488',
+            borderBottom: pathname.startsWith(href) && href !== '/' ? '2px solid #1a1814' : '2px solid transparent',
+            paddingBottom: '2px', transition: 'color .2s', textDecoration: 'none',
           }}>
             {label}
           </Link>

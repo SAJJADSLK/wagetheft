@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
+import Link from 'next/link';
 import Nav from '../components/Nav';
 import Footer from '../components/Footer';
 import AdSlot from '../components/AdSlot';
@@ -97,13 +98,17 @@ export default function Search({ initialResults, initialQuery, initialError }) {
               style={{ background: '#fff', border: '1px solid #e0dbd0', color: '#9a9488', fontSize: '12px', padding: '11px 16px', fontFamily: 'var(--sans)', outline: 'none', letterSpacing: '.04em' }}
             >
               <option value="">All countries</option>
-              <option value="USA">United States</option>
-              <option value="UK">United Kingdom</option>
-              <option value="Australia">Australia</option>
-              <option value="Canada">Canada</option>
-              <option value="Ireland">Ireland</option>
-              <option value="Netherlands">Netherlands</option>
-              <option value="EU">EU (Cross-border)</option>
+              <option value="USA">🇺🇸 United States</option>
+              <option value="UK">🇬🇧 United Kingdom</option>
+              <option value="Canada">🇨🇦 Canada</option>
+              <option value="Australia">🇦🇺 Australia</option>
+              <option value="Ireland">🇮🇪 Ireland</option>
+              <option value="Netherlands">🇳🇱 Netherlands</option>
+              <option value="Germany">🇩🇪 Germany</option>
+              <option value="France">🇫🇷 France</option>
+              <option value="Italy">🇮🇹 Italy</option>
+              <option value="Spain">🇪🇸 Spain</option>
+              <option value="Europe">🇪🇺 EU (Cross-border)</option>
             </select>
             <button
               type="submit"
@@ -138,13 +143,33 @@ export default function Search({ initialResults, initialQuery, initialError }) {
                     : q ? `No records found for "${q}"` : 'Enter a company name to search'}
                 </p>
 
-                {/* Empty state */}
+                {/* Bridge page — keeps users on site when no results */}
                 {results.length === 0 && q && (
-                  <div style={{ padding: '48px 0', textAlign: 'center' }}>
-                    <div style={{ fontFamily: 'var(--serif)', fontSize: '24px', fontWeight: 300, color: '#1a1814', marginBottom: '10px' }}>No records found</div>
-                    <p style={{ fontSize: '13px', color: '#9a9488', fontWeight: 300, lineHeight: 1.8, maxWidth: '480px', margin: '0 auto' }}>
-                      This company may not have a government-recorded violation, or may appear under a different legal entity name. Try searching a partial name or a parent company.
+                  <div style={{ maxWidth: '720px' }}>
+                    <div style={{ fontFamily: 'var(--serif)', fontSize: '28px', fontWeight: 300, color: '#1a1814', marginBottom: '8px' }}>
+                      No records found for <em style={{ color: '#8b6914' }}>{q}</em>
+                    </div>
+                    <p style={{ fontSize: '14px', color: '#6b6560', fontWeight: 300, lineHeight: 1.8, marginBottom: '32px' }}>
+                      This company doesn't appear in our current enforcement database. That doesn't mean everything is fine — government data lags by months. Here's what you can do:
                     </p>
+                    <div style={{ display: 'grid', gap: '12px', marginBottom: '32px' }}>
+                      {[
+                        { icon: '🧮', label: 'Calculate if your pay is correct', href: '/tools/calculator' },
+                        { icon: '📋', label: 'Check our wage theft red flags guide', href: '/red-flags' },
+                        { icon: '⚖️', label: 'Find your country\'s complaint agency', href: '/rights' },
+                        { icon: '🔍', label: 'Try searching a partial name or parent company', href: null },
+                      ].map(({ icon, label, href }) => href ? (
+                        <a key={label} href={href} style={{ background: '#fff', border: '1px solid #e0dbd0', padding: '16px 20px', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '14px', transition: 'border-color .2s', color: '#1a1814' }} onMouseEnter={e => e.currentTarget.style.borderColor='#c9a84c'} onMouseLeave={e => e.currentTarget.style.borderColor='#e0dbd0'}>
+                          <span style={{ fontSize: '20px' }}>{icon}</span>
+                          <span style={{ fontSize: '13px', fontWeight: 400 }}>{label} →</span>
+                        </a>
+                      ) : (
+                        <div key={label} style={{ background: '#f8f6f1', border: '1px solid #e0dbd0', padding: '16px 20px', display: 'flex', alignItems: 'center', gap: '14px' }}>
+                          <span style={{ fontSize: '20px' }}>{icon}</span>
+                          <span style={{ fontSize: '13px', color: '#9a9488', fontWeight: 300 }}>{label}</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
 
@@ -159,7 +184,9 @@ export default function Search({ initialResults, initialQuery, initialError }) {
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '20px', marginBottom: '16px' }}>
                         <div>
                           <div style={{ fontFamily: 'var(--serif)', fontSize: '22px', fontWeight: 500, color: '#1a1814', letterSpacing: '-.01em', marginBottom: '4px' }}>
-                            {v.company_name}
+                            <Link href={`/company/${v.company_name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`} style={{ color: '#1a1814', textDecoration: 'none', transition: 'color .2s' }} onMouseEnter={e => e.currentTarget.style.color='#8b6914'} onMouseLeave={e => e.currentTarget.style.color='#1a1814'}>
+                              {v.company_name}
+                            </Link>
                           </div>
                           {v.trade_name && v.trade_name !== v.company_name && (
                             <div style={{ fontSize: '10px', color: '#9a9488', fontFamily: 'var(--mono)', letterSpacing: '.06em' }}>
